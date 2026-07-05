@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>İskambil Barkod Okuyucu</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            margin: 0;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h2 { margin: 10px 0; color: #00ffcc; font-size: 1.2rem; }
+        .container { position: relative; width: 100%; max-width: 400px; border-rows: 8px; overflow: hidden; }
+        video { width: 100%; height: auto; display: block; border-radius: 8px; transform: scaleX(-1); } /* Ön kamera aynalama */
+        canvas { display: none; }
+        .overlay {
+            position: absolute;
+            top: 15%;
+            left: 5%;
+            width: 90%;
+            height: 12%;
+            border: 3px dashed #00ffcc;
+            box-sizing: border-box;
+            pointer-events: none;
+        }
+        .overlay-text {
+            position: absolute;
+            top: -25px;
+            left: 0;
+            color: #00ffcc;
+            font-size: 0.8rem;
+            background: rgba(0,0,0,0.6);
+            padding: 2px 5px;
+        }
+        .result-box {
+            margin-top: 15px;
+            width: 90%;
+            max-width: 360px;
+            background: #1e1e1e;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            text-align: center;
+        }
+        .binary { font-size: 1.5rem; font-weight: bold; color: #ffcc00; letter-spacing: 3px; margin: 5px 0; }
+        .card-name { font-size: 1.8rem; font-weight: bold; color: #00ffaa; }
+        .status { font-size: 0.9rem; color: #888; margin-top: 5px; }
+    </style>
+    <!-- OpenCV.js kütüphanesini çekiyoruz -->
+    <script async src="https://opencv.org" onload="onOpenCvReady();" type="text/javascript"></script>
+</head>
+<body>
+
+    <h2>Kart Barkod Tarayıcı (Ön Kamera)</h2>
+   
+    <div class="container">
+        <video id="video" autoplay playsinline muted></video>
+        <div class="overlay">
+            <span class="overlay-text">Barkodu tam bu hizaya getirin</span>
+        </div>
+    </div>
+
+    <canvas id="canvasOutput"></canvas>
+
+    <div class="result-box">
+        <div class="status" id="status">Kamera başlatılıyor...</div>
+        <div class="binary" id="binaryResult">- - - - - -</div>
+        <div class="card-name" id="cardResult">KART BEKLENİYOR</div>
+    </div>
+
+<script>
+// Elinizdeki Jannersten Duplimate sisteminin doğrulanan Decimal / Kart eşleşme veritabanı
+const cardDatabase = {
+    32: "Sinek 4 ♣", 33: "Sinek 5 ♣", 34: "Sinek As ♣", 35: "Sinek 6 ♣", 36: "Sinek Kız ♣", 37: "Sinek 7 ♣",
+    38: "Sinek Vale ♣", 39: "Sinek 8 ♣", 40: "Sinek Papaz ♣", 41: "Sinek 9 ♣", 42: "Sinek 2 ♣", 43: "Sinek 10 ♣", 44: "Sinek 3 ♣",
+    1: "Karo Kız ♦", 2: "Karo 7 ♦", 3: "Karo Vale ♦", 4: "Karo 8 ♦", 5: "Karo Papaz ♦", 6: "Karo 9 ♦",
+    7: "Karo 2 ♦", 8: "Karo 10 ♦", 9: "Karo 3 ♦", 10: "Karo 4 ♦", 11: "Karo 5 ♦", 12: "Karo As ♦", 13: "Karo 6 ♦",
+    14: "Kupa 4 ♥", 15: "Kupa 5 ♥", 16: "Kupa As ♥", 17: "Kupa 6 ♥", 37: "Kupa Kız ♥", 18: "Kupa 7 ♥",
+    19: "Kupa Vale ♥", 20: "Kupa 8 ♥", 21: "Kupa Papaz ♥", 22: "Kupa 9 ♥", 23: "Kupa 2 ♥", 24: "Kupa 10 ♥", 25: "Kupa 3 ♥",
+    26: "Maça Kız ♠", 27: "Maça 7 ♠", 28: "Maça Vale ♠", 29: "Maça 8 ♠", 30: "Maça Papaz ♠", 31: "Maça 9 ♠",
+    45: "Maça 2 ♠", 46: "Maça 10 ♠", 47: "Maça 3 ♠", 48: "Maça 4 ♠", 49: "Maça 5 ♠", 50: "Maça As ♠", 51: "Maça 6 ♠"
+};
+
+const video = document.getElementById('video');
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d');
+let openCvReady = false;
+
+function onOpenCvReady() {
+    document.getElementById('status').innerText = "OpenCV Hazır. Kamera aranıyor...";
+    openCvReady = true;
+    startCamera();
+}
+
+// Ön kamerayı (user) talep eden fonksiyon
+function startCamera() {
+    navigator.mediaDevices.getUserMedia({
+        video: {
+            facingMode: "user", // Ön kamera
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+        },
+        audio: false
+    })
+    .then(stream => {
+        video.srcObject = stream;
+        video.play();
+        document.getElementById('status').innerText = "Barkodu hedef alana yaklaştırın";
+        video.addEventListener('canplay', () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            requestAnimationFrame(processVideo);
+        });
+    })
+    .catch(err => {
+        document.getElementById('status').innerText = "Kamera hatası: " + err.message;
+    });
+}
+
+// Gerçek zamanlı görüntü işleme döngüsü
+function processVideo() {
+    if (!openCvReady || video.paused || video.ended) {
+        requestAnimationFrame(processVideo);
+        return;
+    }
+
+    // Mevcut video karesini görünmez canvas'a çiz
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+   
+    try {
+        let src = cv.imread(canvas);
+       
+        // Hedef barkod alanının koordinatlarını belirle (Üst orta-sol alan)
+        // Kart dik tutulduğunda barkod alanına denk gelen kesit (ROI)
+        let x = Math.floor(src.cols * 0.1);
+        let y = Math.floor(src.rows * 0.15);
+        let width = Math.floor(src.cols * 0.8);
+        let height = Math.floor(src.rows * 0.12);
+       
+        let rect = new cv.Rect(x, y, width, height);
+        let roi = src.roi(rect);
+
+        // Görüntüyü gri tona çevir ve eşikleme (Binarization) uygula
+        cv.cvtColor(roi, roi, cv.COLOR_RGBA2GRAY, 0);
+        cv.threshold(roi, roi, 100, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+
+        // ROI merkezinden yatay tek bir piksel satırı boyunca siyah/beyaz taraması yap
+        let midRow = Math.floor(roi.rows / 2);
+        let transitions = [];
+        let lastPixel = roi.ucharPtr(midRow, 0)[0];
+        let currentWidth = 0;
+
+        for (let i = 0; i < roi.cols; i++) {
+            let pixel = roi.ucharPtr(midRow, i)[0];
+            if (pixel === lastPixel) {
+                currentWidth++;
+            } else {
+                if (lastPixel === 255) { // Siyah çizgileri (arka planda beyaz görünen) kaydet
+                    transitions.push(currentWidth);
+                }
+                currentWidth = 1;
+                lastPixel = pixel;
+            }
+        }
+        if (lastPixel === 255) transitions.push(currentWidth);
+
+        // Ön kamera aynalandığı için dizilimi ters çeviriyoruz
+        transitions.reverse();
+
+        // Eğer tam olarak 6 adet çizgi yakalanabildiyse kalın/ince analizi yap
+        if (transitions.length === 6) {
+            let maxW = Math.max(...transitions);
+            let minW = Math.min(...transitions);
+            let thresholdWidth = (maxW + minW) / 2;
+
+            let binaryString = "";
+            transitions.forEach(w => {
+                binaryString += (w > thresholdWidth) ? "1" : "0";
+            });
+
+            // Binary veriyi onluğa (Decimal) çevir
+            let decimalVal = parseInt(binaryString, 2);
+           
+            // Sonuçları ekrana bas
+            document.getElementById('binaryResult').innerText = binaryString;
+            if (cardDatabase[decimalVal]) {
+                document.getElementById('cardResult').innerText = cardDatabase[decimalVal];
+                document.getElementById('status').innerText = `Eşleşme Sağlandı (ID: ${decimalVal})`;
+            } else {
+                document.getElementById('cardResult').innerText = "TANIMSIZ KART";
+                document.getElementById('status').innerText = `Bilinmeyen Kod: ${decimalVal}`;
+            }
+        } else {
+            document.getElementById('status').innerText = `Çizgi aranıyor... (Bulunan: ${transitions.length}/6)`;
+        }
+
+        // Hafızayı temizle
+        src.delete();
+        roi.delete();
+
+    } catch (e) {
+        console.log("İşleme hatası:", e);
+    }
+
+    requestAnimationFrame(processVideo);
+}
+</script>
+</body>
+</html>
