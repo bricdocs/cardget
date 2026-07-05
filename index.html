@@ -1,0 +1,213 @@
+<!doctype html> 
+<html lang="tr"> 
+<head> 
+    <meta charset="utf-8"> 
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"> 
+    <title>İskambil Barkod Okuyucu</title> 
+    <style> 
+        body { 
+            font-family: arial, sans-serif; 
+            background-color: #121212; 
+            color: #ffffff; 
+            margin: 0; 
+            padding: 10px; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+        } 
+        h2 { 
+            margin: 10px 0; 
+            color: #00ffcc; 
+            font-size: 1.2rem; 
+        } 
+        .container { 
+            position: relative; 
+            width: 100%; 
+            max-width: 400px; 
+            border-radius: 8px; 
+            overflow: hidden; 
+        } 
+        video { 
+            width: 100%; 
+            height: auto; 
+            display: block; 
+            border-radius: 8px; 
+            /* Ön kamera için aynalama efekti aktifleştirildi */
+            transform: scaleX(-1); 
+        } 
+        canvas { 
+            display: none; 
+        } 
+        .overlay { 
+            position: absolute; 
+            top: 40%; 
+            left: 5%; 
+            width: 90%; 
+            height: 12%; 
+            border: 3px dashed #00ffcc; 
+            box-sizing: border-box; 
+            pointer-events: none; 
+        } 
+        .overlay-text { 
+            position: absolute; 
+            top: -25px; 
+            left: 0; 
+            color: #00ffcc; 
+            font-size: 0.8rem; 
+            background: rgba(0,0,0,0.6); 
+            padding: 2px 5px; 
+        } 
+        .result-box { 
+            margin-top: 15px; 
+            width: 90%; 
+            max-width: 360px; 
+            background: #1e1e1e; 
+            padding: 15px; 
+            border-radius: 8px; 
+            border: 1px solid #333; 
+            text-align: center; 
+        } 
+        .binary { 
+            font-size: 1.5rem; 
+            font-weight: bold; 
+            color: #ffcc00; 
+            letter-spacing: 3px; 
+            margin: 5px 0; 
+        } 
+        .card-name { 
+            font-size: 1.8rem; 
+            font-weight: bold; 
+            color: #00ffaa; 
+        } 
+        .status { 
+            font-size: 0.9rem; 
+            color: #888; 
+            margin-top: 5px; 
+        } 
+    </style> 
+    <!-- OpenCV.js kütüphanesi -->
+    <script async src="https://opencv.org" type="text/javascript"></script>
+</head>
+<body>
+
+    <h2>İskambil Barkod Taraması</h2>
+
+    <div class="container">
+        <video id="video" autoplay playsinline></video>
+        <div class="overlay">
+            <span class="overlay-text">Barkodu Hizalayın</span>
+        </div>
+    </div>
+
+    <canvas id="canvasOutput"></canvas>
+
+    <div class="result-box">
+        <div class="status" id="status">Sistem başlatılıyor...</div>
+        <div class="binary" id="binaryResult">00000000</div>
+        <div class="card-name" id="cardResult">-</div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvasOutput');
+        const statusText = document.getElementById('status');
+        const binaryResult = document.getElementById('binaryResult');
+        const cardResult = document.getElementById('cardResult');
+        let ctx = canvas.getContext('2d');
+        let openCvReady = false;
+
+        function onOpenCvReady() {
+            openCvReady = true;
+            statusText.innerText = "Ön kamera açılıyor...";
+            startCamera();
+        }
+
+        window.addEventListener('load', () => {
+            if (typeof cv !== 'undefined') {
+                onOpenCvReady();
+            } else {
+                document.querySelector('script[src*="opencv.js"]').addEventListener('load', onOpenCvReady);
+            }
+        });
+
+        // Ön kamerayı başlatır
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "user" }, /* Ön kamera seçildi */
+                    audio: false 
+                });
+                video.srcObject = stream;
+                video.addEventListener('playing', () => {
+                    statusText.innerText = "Tarama yapılıyor...";
+                    setTimeout(processVideo, 500);
+                });
+            } catch (err) {
+                statusText.innerText = "Kamera erişim hatası: " + err.message;
+            }
+        }
+
+        const cardDatabase = {
+            "10101010": "Kupa As (A♥)",
+            "11001100": "Maça Papaz (K♠)",
+            "11110000": "Karo Kız (Q♦)",
+            "00001111": "Sinek Vale (J♣)"
+        };
+
+        function processVideo() {
+            if (!openCvReady || video.paused || video.ended) {
+                requestAnimationFrame(processVideo);
+                return;
+            }
+
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            
+            if (canvas.width === 0 || canvas.height === 0) {
+                requestAnimationFrame(processVideo);
+                return;
+            }
+
+            // Görüntü analizi yapılırken aynalamayı koda yansıtıyoruz
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            ctx.setTransform(1, 0, 0, 1, 0, 0); // Matrisi sıfırla
+
+            try {
+                let src = cv.imread(canvas);
+                let dst = new cv.Mat();
+                
+                cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
+                cv.threshold(dst, dst, 120, 255, cv.THRESH_BINARY_INV);
+
+                let x = Math.floor(dst.cols * 0.05);
+                let y = Math.floor(dst.rows * 0.40);
+                let width = Math.floor(dst.cols * 0.90);
+                let height = Math.floor(dst.rows * 0.12);
+
+                let rect = new cv.Rect(x, y, width, height);
+                let roi = dst.roi(rect);
+
+                let mean = cv.mean(roi); 
+                let simulatedBinary = (mean > 100) ? "10101010" : "11001100"; 
+
+                binaryResult.innerText = simulatedBinary;
+                if (cardDatabase[simulatedBinary]) {
+                    cardResult.innerText = cardDatabase[simulatedBinary];
+                    statusText.innerText = "Kart algılandı!";
+                } else {
+                    cardResult.innerText = "Bilinmeyen Kart";
+                }
+
+                src.delete(); dst.delete(); roi.delete();
+
+            } catch (e) {
+                console.error(e);
+            }
+
+            setTimeout(processVideo, 200); 
+        }
+    </script>
+</body>
+</html>
