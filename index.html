@@ -32,7 +32,6 @@
             height: auto; 
             display: block; 
             border-radius: 8px; 
-            /* Ön kamera için aynalama efekti aktifleştirildi */
             transform: scaleX(-1); 
         } 
         canvas { 
@@ -84,6 +83,10 @@
             color: #888; 
             margin-top: 5px; 
         } 
+        .error-msg {
+            color: #ff3333 !important;
+            font-weight: bold;
+        }
     </style> 
     <!-- OpenCV.js kütüphanesi -->
     <script async src="https://opencv.org" type="text/javascript"></script>
@@ -122,29 +125,57 @@
             startCamera();
         }
 
+        // OpenCV'nin yüklenmesini bekleyen güvenli tetikleyici
         window.addEventListener('load', () => {
-            if (typeof cv !== 'undefined') {
+            if (typeof cv !== 'undefined' && cv.Mat) {
                 onOpenCvReady();
             } else {
-                document.querySelector('script[src*="opencv.js"]').addEventListener('load', onOpenCvReady);
+                // Kütüphane yüklenmediyse takip et
+                let checkCv = setInterval(() => {
+                    if (typeof cv !== 'undefined' && cv.Mat) {
+                        clearInterval(checkCv);
+                        onOpenCvReady();
+                    }
+                }, 100);
             }
         });
 
-        // Ön kamerayı başlatır
         async function startCamera() {
+            // Tarayıcı destek kontrolü
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                showError("Tarayıcınız kamera erişimini desteklemiyor veya HTTPS kullanmıyorsunuz.");
+                return;
+            }
+
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "user" }, /* Ön kamera seçildi */
+                    video: { 
+                        facingMode: "user",
+                        width: { ideal: 640 },
+                        height: { ideal: 480 }
+                    }, 
                     audio: false 
                 });
                 video.srcObject = stream;
                 video.addEventListener('playing', () => {
+                    statusText.classList.remove('error-msg');
                     statusText.innerText = "Tarama yapılıyor...";
                     setTimeout(processVideo, 500);
                 });
             } catch (err) {
-                statusText.innerText = "Kamera erişim hatası: " + err.message;
+                if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                    showError("Kamera izni reddedildi. Lütfen tarayıcı ayarlarından izin verin.");
+                } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                    showError("Ön kamera bulunamadı.");
+                } else {
+                    showError("Kamera Hatası: " + err.message);
+                }
             }
+        }
+
+        function showError(msg) {
+            statusText.classList.add('error-msg');
+            statusText.innerText = msg;
         }
 
         const cardDatabase = {
@@ -168,11 +199,10 @@
                 return;
             }
 
-            // Görüntü analizi yapılırken aynalamayı koda yansıtıyoruz
             ctx.translate(canvas.width, 0);
             ctx.scale(-1, 1);
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            ctx.setTransform(1, 0, 0, 1, 0, 0); // Matrisi sıfırla
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
 
             try {
                 let src = cv.imread(canvas);
