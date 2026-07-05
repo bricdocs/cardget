@@ -89,7 +89,6 @@
             color: #00ffcc; 
             margin-top: 5px; 
         } 
-        /* Yeni Eklenen Kontrol Alanı Tasarımı */
         .controls {
             margin-top: 15px;
             width: 90%;
@@ -130,12 +129,11 @@
     <canvas id="analyzerCanvas"></canvas>
 
     <div class="result-box">
-        <div class="status" id="status">Kamera aranıyor...</div>
+        <div class="status" id="status">Kamera başlatılıyor...</div>
         <div class="binary" id="binaryResult">000000</div>
         <div class="card-name" id="cardResult">-</div>
     </div>
 
-    <!-- Hassasiyet Kaydırıcı Arayüzü -->
     <div class="controls">
         <div class="slider-container">
             <span>Işık Hassasiyeti:</span>
@@ -152,7 +150,6 @@
         const cardResult = document.getElementById('cardResult');
         const sensitivitySlider = document.getElementById('sensitivitySlider');
 
-        // Ses Motoru Ayarları (Dışarıdan mp3 yüklemeden tarayıcının kendi sesini üretir)
         let audioCtx = null;
         let lastScannedCard = "";
         let lastScanTime = 0;
@@ -164,20 +161,19 @@
                 let gainNode = audioCtx.createGain();
                 
                 oscillator.type = "sine";
-                oscillator.frequency.value = 1200; // Profesyonel bip tonu frekansı
-                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime); // Ses seviyesi %10
+                oscillator.frequency.value = 1200; 
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime); 
                 
                 oscillator.connect(gainNode);
                 gainNode.connect(audioCtx.destination);
                 
                 oscillator.start();
-                oscillator.stop(audioCtx.currentTime + 0.08); // 80 milisaniye çal ve dur
+                oscillator.stop(audioCtx.currentTime + 0.08); 
             } catch (e) {
-                console.error("Ses çalınamadı:", e);
+                console.error(e);
             }
         }
 
-        // 52'LİK CASINO PROTOKOLÜ VERİTABANI
         const cardDatabase = {
             "000001": "Sinek As (A♣) [ID:1]",     "000010": "Sinek 2 (2♣) [ID:2]",     "000011": "Sinek 3 (3♣) [ID:3]",
             "000100": "Sinek 4 (4♣) [ID:4]",     "000101": "Sinek 5 (5♣) [ID:5]",     "000110": "Sinek 6 (6♣) [ID:6]",
@@ -215,7 +211,7 @@
                 statusText.innerText = "Kart bekleniyor...";
                 requestAnimationFrame(analyzeFrame);
             } catch (err) {
-                statusText.innerHTML = "<span style='color:#ff3333'>Kamera Erişim Hatası.</span>";
+                statusText.innerHTML = "<span style='color:#ff3333'>Kamera Erişim Hatası: " + err.name + "</span>";
             }
         }
 
@@ -250,7 +246,15 @@
                 let max = Math.max(...lumaValues);
                 let min = Math.min(...lumaValues);
                 
-                // Slider'dan gelen değere göre eşik (threshold) oranını ayarla
                 let sliderFactor = parseInt(sensitivitySlider.value) / 100;
                 let threshold = min + (max - min) * sliderFactor;
 
+                let currentBit = lumaValues > threshold ? 1 : 0;
+                let bitRunLength = 0;
+                let runs = [];
+
+                for (let i = 0; i < lumaValues.length; i++) {
+                    let bit = lumaValues[i] > threshold ? 1 : 0;
+                    if (bit === currentBit) {
+                        bitRunLength++;
+                    } else {
