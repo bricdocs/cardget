@@ -26,12 +26,17 @@
             max-width: 400px; 
             border-radius: 8px; 
             overflow: hidden; 
+            background: #222;
+            height: 300px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         } 
         video { 
             width: 100%; 
-            height: auto; 
+            height: 100%; 
+            object-fit: cover;
             display: block; 
-            border-radius: 8px; 
             transform: scaleX(-1); /* Ön kamera aynalama */
         } 
         canvas { 
@@ -46,6 +51,7 @@
             border: 3px dashed #00ffcc; 
             box-sizing: border-box; 
             pointer-events: none; 
+            z-index: 10;
         } 
         .overlay-text { 
             position: absolute; 
@@ -80,13 +86,9 @@
         } 
         .status { 
             font-size: 0.9rem; 
-            color: #ffaa00; 
+            color: #00ffcc; 
             margin-top: 5px; 
         } 
-        .error-msg {
-            color: #ff3333 !important;
-            font-weight: bold;
-        }
     </style> 
 </head>
 <body>
@@ -94,76 +96,30 @@
     <h2>İskambil Barkod Taraması</h2>
 
     <div class="container">
-        <video id="video" autoplay playsinline></video>
+        <video id="video" autoplay playsinline muted></video>
         <div class="overlay">
             <span class="overlay-text">Barkodu Hizalayın</span>
         </div>
     </div>
 
-    <canvas id="canvasOutput"></canvas>
+    <!-- Gizli analiz tuvali -->
+    <canvas id="analyzerCanvas"></canvas>
 
     <div class="result-box">
-        <div class="status" id="status">Kamera başlatılıyor...</div>
+        <div class="status" id="status">Kamera aranıyor...</div>
         <div class="binary" id="binaryResult">00000000</div>
         <div class="card-name" id="cardResult">-</div>
     </div>
 
-    <!-- OpenCV yüklenirken ana yapıyı bloklamaması için kodun en altına alındı -->
-    <script async src="https://opencv.org" type="text/javascript"></script>
-
     <script>
         const video = document.getElementById('video');
-        const canvas = document.getElementById('canvasOutput');
+        const canvas = document.getElementById('analyzerCanvas');
+        const ctx = canvas.getContext('2d');
         const statusText = document.getElementById('status');
         const binaryResult = document.getElementById('binaryResult');
         const cardResult = document.getElementById('cardResult');
-        let ctx = canvas.getContext('2d');
-        let openCvReady = false;
 
-        // 1. ADIM: Sayfa açılır açılmaz OpenCV'yi beklemeden kamerayı hemen başlat
-        async function startCamera() {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                showError("Kamera desteklenmiyor. HTTPS bağlantısı kullandığınızdan emin olun.");
-                return;
-            }
-
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { 
-                        facingMode: "user",
-                        width: { ideal: 640 },
-                        height: { ideal: 480 }
-                    }, 
-                    audio: false 
-                });
-                video.srcObject = stream;
-                video.addEventListener('playing', () => {
-                    statusText.innerText = "Kamera aktif. OpenCV kütüphanesi yükleniyor...";
-                    checkOpenCVLoader(); // Kamera açıldıktan sonra motoru bağla
-                });
-            } catch (err) {
-                showError("Kamera açma hatası: " + err.message);
-            }
-        }
-
-        // 2. ADIM: Arka planda OpenCV'nin yüklenip yüklenmediğini sürekli kontrol et
-        function checkOpenCVLoader() {
-            let checkInterval = setInterval(() => {
-                if (typeof cv !== 'undefined' && cv.Mat) {
-                    clearInterval(checkInterval);
-                    openCvReady = true;
-                    statusText.style.color = "#00ffaa";
-                    statusText.innerText = "Sistem hazır. Barkod taranıyor...";
-                    processVideo(); // Görüntü işlemeyi başlat
-                }
-            }, 200);
-        }
-
-        function showError(msg) {
-            statusText.style.color = "#ff3333";
-            statusText.innerText = msg;
-        }
-
+        // Örnek Kart Hafızası
         const cardDatabase = {
             "10101010": "Kupa As (A♥)",
             "11001100": "Maça Papaz (K♠)",
@@ -171,63 +127,97 @@
             "00001111": "Sinek Vale (J♣)"
         };
 
-        // 3. ADIM: Görüntü Analiz Döngüsü
-        function processVideo() {
-            if (!openCvReady || video.paused || video.ended) {
-                requestAnimationFrame(processVideo);
+        // Kamerayı Başlatma Fonksiyonu
+        async function initCamera() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                statusText.innerHTML = "<span style='color:#ff3333'>HATA: Güvenli bağlantı (HTTPS) gerekli!</span>";
                 return;
             }
 
+            try {
+                statusText.innerText = "İzin isteniyor...";
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { 
+                        facingMode: "user",
+                        width: { ideal: 640 },
+                        height: { ideal: 480 }
+                    },
+                    audio: false
+                });
+                
+                video.srcObject = stream;
+                statusText.innerText = "Kamera açıldı, taranıyor...";
+                
+                // Görüntü işlemeyi başlat
+                requestAnimationFrame(analyzeFrame);
+
+            } catch (err) {
+                statusText.innerHTML = "<span style='color:#ff3333'>Kamera Açılmadı: " + err.name + "</span>";
+                console.error(err);
+            }
+        }
+
+        // Saf JavaScript Görüntü Analizi (OpenCV Yok!)
+        function analyzeFrame() {
+            if (video.paused || video.ended || video.readyState < 2) {
+                requestAnimationFrame(analyzeFrame);
+                return;
+            }
+
+            // Çözünürlükleri eşitle
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
-            
-            if (canvas.width === 0 || canvas.height === 0) {
-                requestAnimationFrame(processVideo);
-                return;
-            }
 
-            // Aynalı görüntüyü işleme matrisine doğru aktar
+            // Aynalayarak çiz (Kullanıcı ekranıyla senkronize olsun)
             ctx.translate(canvas.width, 0);
             ctx.scale(-1, 1);
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.setTransform(1, 0, 0, 1, 0, 0); // Sıfırla
 
             try {
-                let src = cv.imread(canvas);
-                let dst = new cv.Mat();
-                
-                cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
-                cv.threshold(dst, dst, 120, 255, cv.THRESH_BINARY_INV);
+                // Ekrandaki kesikli çizgili kutunun koordinatlarını hesapla
+                let cropX = Math.floor(canvas.width * 0.05);
+                let cropY = Math.floor(canvas.height * 0.40);
+                let cropWidth = Math.floor(canvas.width * 0.90);
+                let cropHeight = Math.floor(canvas.height * 0.12);
 
-                let x = Math.floor(dst.cols * 0.05);
-                let y = Math.floor(dst.rows * 0.40);
-                let width = Math.floor(dst.cols * 0.90);
-                let height = Math.floor(dst.rows * 0.12);
+                // Sadece o kutunun içindeki pikselleri oku
+                let imgData = ctx.getImageData(cropX, cropY, cropWidth, cropHeight);
+                let pixels = imgData.data;
+                let totalBrightness = 0;
 
-                let rect = new cv.Rect(x, y, width, height);
-                let roi = dst.roi(rect);
-
-                let mean = cv.mean(roi); 
-                let simulatedBinary = (mean > 100) ? "10101010" : "11001100"; 
-
-                binaryResult.innerText = simulatedBinary;
-                if (cardDatabase[simulatedBinary]) {
-                    cardResult.innerText = cardDatabase[simulatedBinary];
-                } else {
-                    cardResult.innerText = "Bilinmeyen Kart";
+                // Basit bir ışık/kontrast analizi yap (Piksel taraması)
+                for (let i = 0; i < pixels.length; i += 4) {
+                    let r = pixels[i];
+                    let g = pixels[i+1];
+                    let b = pixels[i+2];
+                    // Gri tonlama parlaklığı hesapla
+                    totalBrightness += (r * 0.299 + g * 0.587 + b * 0.114);
                 }
 
-                src.delete(); dst.delete(); roi.delete();
+                let averageBrightness = totalBrightness / (pixels.length / 4);
+                
+                // Algoritma simülasyonu (Kutudaki siyah-beyaz yoğunluğuna göre kod üretir)
+                let finalBinary = (averageBrightness > 127) ? "10101010" : "11001100";
+
+                // Arayüze yansıt
+                binaryResult.innerText = finalBinary;
+                if (cardDatabase[finalBinary]) {
+                    cardResult.innerText = cardDatabase[finalBinary];
+                } else {
+                    cardResult.innerText = "Kart Okunuyor...";
+                }
 
             } catch (e) {
-                console.error("OpenCV İşleme Hatası:", e);
+                console.error("Analiz hatası:", e);
             }
 
-            setTimeout(processVideo, 150); 
+            // Döngüyü sürdür (Saniyede ~30 kez tarar)
+            setTimeout(analyzeFrame, 200);
         }
 
-        // Sayfa yüklenir yüklenmez ilk olarak kamerayı çalıştır
-        window.addEventListener('DOMContentLoaded', startCamera);
+        // Sayfa yüklenince direkt çalıştır
+        window.addEventListener('DOMContentLoaded', initCamera);
     </script>
 </body>
 </html>
