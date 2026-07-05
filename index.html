@@ -1,6 +1,6 @@
 <!doctype html> 
 <html lang="tr"> 
-<head>
+<head> 
     <meta charset="utf-8"> 
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"> 
     <title>İskambil Barkod Okuyucu</title> 
@@ -32,7 +32,7 @@
             height: auto; 
             display: block; 
             border-radius: 8px; 
-            transform: scaleX(-1); 
+            transform: scaleX(-1); /* Ön kamera aynalama */
         } 
         canvas { 
             display: none; 
@@ -80,7 +80,7 @@
         } 
         .status { 
             font-size: 0.9rem; 
-            color: #888; 
+            color: #ffaa00; 
             margin-top: 5px; 
         } 
         .error-msg {
@@ -88,8 +88,6 @@
             font-weight: bold;
         }
     </style> 
-    <!-- OpenCV.js kütüphanesi -->
-    <script async src="https://opencv.org" type="text/javascript"></script>
 </head>
 <body>
 
@@ -105,10 +103,13 @@
     <canvas id="canvasOutput"></canvas>
 
     <div class="result-box">
-        <div class="status" id="status">Sistem başlatılıyor...</div>
+        <div class="status" id="status">Kamera başlatılıyor...</div>
         <div class="binary" id="binaryResult">00000000</div>
         <div class="card-name" id="cardResult">-</div>
     </div>
+
+    <!-- OpenCV yüklenirken ana yapıyı bloklamaması için kodun en altına alındı -->
+    <script async src="https://opencv.org" type="text/javascript"></script>
 
     <script>
         const video = document.getElementById('video');
@@ -119,31 +120,10 @@
         let ctx = canvas.getContext('2d');
         let openCvReady = false;
 
-        function onOpenCvReady() {
-            openCvReady = true;
-            statusText.innerText = "Ön kamera açılıyor...";
-            startCamera();
-        }
-
-        // OpenCV'nin yüklenmesini bekleyen güvenli tetikleyici
-        window.addEventListener('load', () => {
-            if (typeof cv !== 'undefined' && cv.Mat) {
-                onOpenCvReady();
-            } else {
-                // Kütüphane yüklenmediyse takip et
-                let checkCv = setInterval(() => {
-                    if (typeof cv !== 'undefined' && cv.Mat) {
-                        clearInterval(checkCv);
-                        onOpenCvReady();
-                    }
-                }, 100);
-            }
-        });
-
+        // 1. ADIM: Sayfa açılır açılmaz OpenCV'yi beklemeden kamerayı hemen başlat
         async function startCamera() {
-            // Tarayıcı destek kontrolü
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                showError("Tarayıcınız kamera erişimini desteklemiyor veya HTTPS kullanmıyorsunuz.");
+                showError("Kamera desteklenmiyor. HTTPS bağlantısı kullandığınızdan emin olun.");
                 return;
             }
 
@@ -158,23 +138,29 @@
                 });
                 video.srcObject = stream;
                 video.addEventListener('playing', () => {
-                    statusText.classList.remove('error-msg');
-                    statusText.innerText = "Tarama yapılıyor...";
-                    setTimeout(processVideo, 500);
+                    statusText.innerText = "Kamera aktif. OpenCV kütüphanesi yükleniyor...";
+                    checkOpenCVLoader(); // Kamera açıldıktan sonra motoru bağla
                 });
             } catch (err) {
-                if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-                    showError("Kamera izni reddedildi. Lütfen tarayıcı ayarlarından izin verin.");
-                } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-                    showError("Ön kamera bulunamadı.");
-                } else {
-                    showError("Kamera Hatası: " + err.message);
-                }
+                showError("Kamera açma hatası: " + err.message);
             }
         }
 
+        // 2. ADIM: Arka planda OpenCV'nin yüklenip yüklenmediğini sürekli kontrol et
+        function checkOpenCVLoader() {
+            let checkInterval = setInterval(() => {
+                if (typeof cv !== 'undefined' && cv.Mat) {
+                    clearInterval(checkInterval);
+                    openCvReady = true;
+                    statusText.style.color = "#00ffaa";
+                    statusText.innerText = "Sistem hazır. Barkod taranıyor...";
+                    processVideo(); // Görüntü işlemeyi başlat
+                }
+            }, 200);
+        }
+
         function showError(msg) {
-            statusText.classList.add('error-msg');
+            statusText.style.color = "#ff3333";
             statusText.innerText = msg;
         }
 
@@ -185,6 +171,7 @@
             "00001111": "Sinek Vale (J♣)"
         };
 
+        // 3. ADIM: Görüntü Analiz Döngüsü
         function processVideo() {
             if (!openCvReady || video.paused || video.ended) {
                 requestAnimationFrame(processVideo);
@@ -199,6 +186,7 @@
                 return;
             }
 
+            // Aynalı görüntüyü işleme matrisine doğru aktar
             ctx.translate(canvas.width, 0);
             ctx.scale(-1, 1);
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -225,7 +213,6 @@
                 binaryResult.innerText = simulatedBinary;
                 if (cardDatabase[simulatedBinary]) {
                     cardResult.innerText = cardDatabase[simulatedBinary];
-                    statusText.innerText = "Kart algılandı!";
                 } else {
                     cardResult.innerText = "Bilinmeyen Kart";
                 }
@@ -233,11 +220,14 @@
                 src.delete(); dst.delete(); roi.delete();
 
             } catch (e) {
-                console.error(e);
+                console.error("OpenCV İşleme Hatası:", e);
             }
 
-            setTimeout(processVideo, 200); 
+            setTimeout(processVideo, 150); 
         }
+
+        // Sayfa yüklenir yüklenmez ilk olarak kamerayı çalıştır
+        window.addEventListener('DOMContentLoaded', startCamera);
     </script>
 </body>
 </html>
