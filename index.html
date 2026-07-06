@@ -27,7 +27,7 @@
             border-radius: 8px; 
             overflow: hidden; 
             background: #222;
-            height: 360px; 
+            height: 340px; 
             display: flex; 
             align-items: center; 
             justify-content: center;
@@ -37,8 +37,11 @@
             height: 100%; 
             object-fit: cover; 
             display: block; 
-            /* Arka kamera için aynalama efekti kaldırıldı */
         } 
+        /* Ön kameraya geçildiğinde dinamik uygulanacak aynalama sınıfı */
+        .mirror {
+            transform: scaleX(-1);
+        }
         canvas { 
             display: none; 
         } 
@@ -122,6 +125,23 @@
             margin-left: 10px;
             accent-color: #00ffcc;
         }
+        /* Yeni Kamera Değiştirme Buton Stili */
+        .btn-switch {
+            width: 100%;
+            background: #00ffcc;
+            color: #121212;
+            border: none;
+            padding: 10px;
+            font-size: 0.95rem;
+            font-weight: bold;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s;
+            margin-bottom: 4px;
+        }
+        .btn-switch:hover {
+            background: #00ccaa;
+        }
     </style> 
 </head>
 <body>
@@ -145,6 +165,9 @@
     </div>
 
     <div class="controls">
+        <!-- KAMERA DEĞİŞTİRME BUTONU -->
+        <button class="btn-switch" onclick="switchCamera()">Kamera Değiştir (Ön / Arka)</button>
+        
         <div class="slider-container">
             <span>Çizgi Keskinlik Ayarı:</span>
             <input type="range" id="sensitivitySlider" min="20" max="80" value="50">
@@ -162,6 +185,8 @@
 
         let audioCtx = null;
         let isFrozen = false;
+        let currentStream = null;
+        let currentFacingMode = "environment"; // Varsayılan olarak performanslı arka kameradan başlar
 
         function playBeep() {
             try {
@@ -202,30 +227,65 @@
             "110001": "Maça 10 (10♠) [ID:49]",   "110010": "Maça Vale (J♠) [ID:50]",  "110011": "Maça Kız (Q♠) [ID:51]",
             "110100": "Maça Papaz (K♠) [ID:52]"
         };
+        // CANLI KAMERA DEĞİŞTİRME MEKANİZMASI
+        async function switchCamera() {
+            // Mevcut çalışan kamerayı durdur ve belleği temizle
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+            
+            // Modu tersine çevir
+            currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
+            
+            // Yeni kamera ayarlarıyla sistemi baştan başlat
+            await initCamera();
+        }
+
         async function initCamera() {
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 statusText.innerHTML = "<span style='color:#ff3333'>HATA: HTTPS gerekli!</span>";
                 return;
             }
+            
+            // Eğer eski kamera akışı varsa kapatıldığından emin ol
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+
             try {
-                // Makro ve Otomatik Odaklama Yeteneği için Arka Kamera (environment) Zorlaması
+                let videoConstraints = {
+                    facingMode: currentFacingMode,
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                };
+
+                // Eğer arka kamera seçildiyse çözünürlüğü Full HD'ye zorla ve odak parametresini ekle
+                if (currentFacingMode === "environment") {
+                    videoConstraints.width.ideal = 1920;
+                    videoConstraints.height.ideal = 1080;
+                    videoConstraints.advanced = [{ focusMode: "continuous" }];
+                    video.classList.remove('mirror'); // Arka kamerada düz görüntü
+                    statusText.innerText = "Arka Kamera Aktif. Odaklanıyor...";
+                } else {
+                    video.classList.add('mirror'); // Ön kamerada ayna görüntüsü
+                    statusText.innerText = "Ön Kamera Aktif. Hizalanıyor...";
+                }
+
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { 
-                        facingMode: "environment", /* ARKA KAMERA SEÇİLDİ */
-                        width: { ideal: 1920 }, 
-                        height: { ideal: 1080 }
-                    },
+                    video: videoConstraints,
                     audio: false
                 });
+                
+                currentStream = stream;
                 video.srcObject = stream;
-                statusText.innerText = "Arka Kamera Aktif. Odaklanıyor...";
+                
+                // Analiz döngüsünü tetikle (Eğer ilk açılışsa)
                 requestAnimationFrame(analyzeFrame);
             } catch (err) {
-                statusText.innerHTML = "<span style='color:#ff3333'>Kamera Erişim Hatası: " + err.name + "</span>";
+                statusText.innerHTML = "<span style='color:#ff3333'>Kamera Değiştirme Hatası: " + err.name + "</span>";
             }
         }
 
-        // Yazılımsal Kenar Keskinleştirme Filtresi
         function sharpenMatrix(data, w, h) {
             let weights = [0, -1, 0, -1, 5, -1, 0, -1, 0]; 
             let side = Math.round(Math.sqrt(weights.length));
@@ -268,8 +328,15 @@
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
 
-            // Arka kamerada aynalama ihtiyacı olmadığı için normal çizim yapılıyor
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            // Ön kamera veya arka kameraya göre Canvas işleme matrisini dinamik senkronize et
+            if (currentFacingMode === "user") {
+                ctx.translate(canvas.width, 0);
+                ctx.scale(-1, 1);
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+            } else {
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            }
 
             try {
                 let cropX = Math.floor(canvas.width * 0.15);
@@ -300,12 +367,13 @@
                 let min = Math.min(...lumaValues);
                 let contrast = max - min;
 
-                // GÜVENLİK BARİYERLERİ: Arka kamera kumlanma oranlarına göre (Kontrast: 120, Gürültü Oranı: 12) sıkılaştırıldı.
-                // Kart yokken veya odak bozukken uydurma veri üretilmesini ve biplemesini tamamen keser.
+                // Gelişmiş gürültü duvarı: Boşta hatalı biplemeyi tamamen önler
                 if (contrast < 120 || (noiseCheck / cropWidth) > 12) {
                     binaryResult.innerText = "000000";
                     cardResult.innerText = "-";
-                    statusText.innerText = "Barkodu kırmızı çizgiye getirin ve netleşmesini bekleyin.";
+                    // Kameranın aktif moduna göre kılavuz mesajı güncelle
+                    statusText.innerText = currentFacingMode === "environment" ? 
+                        "Barkodu kırmızı çizgiye hizalayın (Arka Kamera)" : "Barkodu kırmızı çizgiye hizalayın (Ön Kamera)";
                     setTimeout(analyzeFrame, 130);
                     return;
                 }
@@ -313,7 +381,7 @@
                 let sliderFactor = parseInt(sensitivitySlider.value) / 100;
                 let threshold = min + contrast * sliderFactor;
 
-                let currentBit = lumaValues[0] > threshold ? 1 : 0;
+                let currentBit = lumaValues > threshold ? 1 : 0;
                 let bitRunLength = 0;
                 let runs = [];
 
@@ -345,10 +413,9 @@
                     if (cardDatabase[binaryString]) {
                         let matchedCard = cardDatabase[binaryString];
                         cardResult.innerText = matchedCard;
-                        statusText.innerText = "KART OKUNDU! (Ekran Sabitlendi)";
+                        statusText.innerText = "KART ALGILANDI! (Sistem Kilitlendi)";
                         playBeep();
                         
-                        // Başarılı okumada ekranı 1.5 saniye dondurur
                         isFrozen = true;
                         setTimeout(() => {
                             isFrozen = false;
