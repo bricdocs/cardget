@@ -38,10 +38,6 @@
             object-fit: cover; 
             display: block; 
         } 
-        /* Ön kameraya geçildiğinde dinamik uygulanacak aynalama sınıfı */
-        .mirror {
-            transform: scaleX(-1);
-        }
         canvas { 
             display: none; 
         } 
@@ -70,8 +66,8 @@
             top: 50%;
             left: 0;
             width: 100%;
-            height: 2px;
-            background: rgba(255, 0, 0, 0.9); 
+            height: 3px;
+            background: #ff3333; 
             z-index: 11;
         }
         .result-box { 
@@ -101,47 +97,6 @@
             color: #00ffcc; 
             margin-top: 5px; 
         } 
-        .controls {
-            margin-top: 15px;
-            width: 90%;
-            max-width: 360px;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            font-size: 0.85rem;
-            color: #aaa;
-        }
-        .slider-container {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            background: #1a1a1a;
-            padding: 8px 12px;
-            border-radius: 6px;
-            border: 1px solid #222;
-        }
-        input[type=range] {
-            flex-grow: 1;
-            margin-left: 10px;
-            accent-color: #00ffcc;
-        }
-        /* Yeni Kamera Değiştirme Buton Stili */
-        .btn-switch {
-            width: 100%;
-            background: #00ffcc;
-            color: #121212;
-            border: none;
-            padding: 10px;
-            font-size: 0.95rem;
-            font-weight: bold;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: background 0.2s;
-            margin-bottom: 4px;
-        }
-        .btn-switch:hover {
-            background: #00ccaa;
-        }
     </style> 
 </head>
 <body>
@@ -164,16 +119,6 @@
         <div class="card-name" id="cardResult">-</div>
     </div>
 
-    <div class="controls">
-        <!-- KAMERA DEĞİŞTİRME BUTONU -->
-        <button class="btn-switch" onclick="switchCamera()">Kamera Değiştir (Ön / Arka)</button>
-        
-        <div class="slider-container">
-            <span>Çizgi Keskinlik Ayarı:</span>
-            <input type="range" id="sensitivitySlider" min="20" max="80" value="50">
-        </div>
-    </div>
-
     <script>
         const video = document.getElementById('video');
         const canvas = document.getElementById('analyzerCanvas');
@@ -181,212 +126,124 @@
         const statusText = document.getElementById('status');
         const binaryResult = document.getElementById('binaryResult');
         const cardResult = document.getElementById('cardResult');
-        const sensitivitySlider = document.getElementById('sensitivitySlider');
-
-        let audioCtx = null;
-        let isFrozen = false;
-        let currentStream = null;
-        let currentFacingMode = "environment"; // Varsayılan olarak performanslı arka kameradan başlar
-
-        function playBeep() {
-            try {
-                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                let oscillator = audioCtx.createOscillator();
-                let gainNode = audioCtx.createGain();
-                oscillator.type = "sine";
-                oscillator.frequency.value = 1400; 
-                gainNode.gain.setValueAtTime(0.08, audioCtx.currentTime); 
-                oscillator.connect(gainNode);
-                gainNode.connect(audioCtx.destination);
-                oscillator.start();
-                oscillator.stop(audioCtx.currentTime + 0.06); 
-            } catch (e) {
-                console.error(e);
-            }
-        }
 
         const cardDatabase = {
-            "000001": "Sinek As (A♣) [ID:1]",     "000010": "Sinek 2 (2♣) [ID:2]",     "000011": "Sinek 3 (3♣) [ID:3]",
-            "000100": "Sinek 4 (4♣) [ID:4]",     "000101": "Sinek 5 (5♣) [ID:5]",     "000110": "Sinek 6 (6♣) [ID:6]",
-            "000111": "Sinek 7 (7♣) [ID:7]",     "001000": "Sinek 8 (8♣) [ID:8]",     "001001": "Sinek 9 (9♣) [ID:9]",
-            "001010": "Sinek 10 (10♣) [ID:10]",  "001011": "Sinek Vale (J♣) [ID:11]", "001100": "Sinek Kız (Q♣) [ID:12]",
-            "001101": "Sinek Papaz (K♣) [ID:13]",
-            "001110": "Karo As (A♦) [ID:14]",    "001111": "Karo 2 (2♦) [ID:15]",     "010000": "Karo 3 (3♦) [ID:16]",
-            "010001": "Karo 4 (4♦) [ID:17]",     "010010": "Karo 5 (5♦) [ID:18]",     "010011": "Karo 6 (6♦) [ID:19]",
-            "010100": "Karo 7 (7♦) [ID:20]",     "010101": "Karo 8 (8♦) [ID:21]",     "010110": "Karo 9 (9♦) [ID:22]",
-            "010111": "Karo 10 (10♦) [ID:23]",   "011000": "Karo Vale (J♦) [ID:24]",  "011001": "Karo Kız (Q♦) [ID:25]",
-            "011010": "Karo Papaz (K♦) [ID:26]",
-            "011011": "Kupa As (A♥) [ID:27]",    "011100": "Kupa 2 (2♥) [ID:28]",     "011101": "Kupa 3 (3♥) [ID:29]",
-            "011110": "Kupa 4 (4♥) [ID:30]",     "011111": "Kupa 5 (5♥) [ID:31]",     "100000": "Kupa 6 (6♥) [ID:32]",
-            "100001": "Kupa 7 (7♥) [ID:33]",     "100010": "Kupa 8 (8♥) [ID:34]",     "100011": "Kupa 9 (9♥) [ID:35]",
-            "100100": "Kupa 10 (10♥) [ID:36]",   "100101": "Kupa Kız (Q♥) [ID:37]",   "100110": "Kupa Vale (J♥) [ID:38]",
-            "100111": "Kupa Papaz (K♥) [ID:39]",
-            "101000": "Maça As (A♠) [ID:40]",    "101001": "Maça 2 (2♠) [ID:41]",     "101010": "Maça 3 (3♠) [ID:42]",
-            "101011": "Maça 4 (4♠) [ID:43]",     "101100": "Maça 5 (5♠) [ID:44]",     "101101": "Maça 6 (6♠) [ID:45]",
-            "101110": "Maça 7 (7♠) [ID:46]",     "101111": "Maça 8 (8♠) [ID:47]",     "110000": "Maça 9 (9♠) [ID:48]",
-            "110001": "Maça 10 (10♠) [ID:49]",   "110010": "Maça Vale (J♠) [ID:50]",  "110011": "Maça Kız (Q♠) [ID:51]",
-            "110100": "Maça Papaz (K♠) [ID:52]"
+            "000001": "Sinek As (A♣)", "000010": "Sinek 2 (2♣)", "000011": "Sinek 3 (3♣)", "000100": "Sinek 4 (4♣)",
+            "000101": "Sinek 5 (5♣)", "000110": "Sinek 6 (6♣)", "000111": "Sinek 7 (7♣)", "001000": "Sinek 8 (8♣)",
+            "001001": "Sinek 9 (9♣)", "001010": "Sinek 10 (10♣)", "001011": "Sinek Vale (J♣)", "001100": "Sinek Kız (Q♣)",
+            "001101": "Sinek Papaz (K♣)",
+            "001110": "Karo As (A♦)", "001111": "Karo 2 (2♦)", "010000": "Karo 3 (3♦)", "010001": "Karo 4 (4♦)",
+            "010010": "Karo 5 (5♦)", "010011": "Karo 6 (6♦)", "010100": "Karo 7 (7♦)", "010101": "Karo 8 (8♦)",
+            "010110": "Karo 9 (9♦)", "010111": "Karo 10 (10♦)", "011000": "Karo Vale (J♦)", "011001": "Karo Kız (Q♦)",
+            "011010": "Karo Papaz (K♦)",
+            "011011": "Kupa As (A♥)", "011100": "Kupa 2 (2♥)", "011101": "Kupa 3 (3♥)", "011110": "Kupa 4 (4♥)",
+            "011111": "Kupa 5 (5♥)", "100000": "Kupa 6 (6♥)", "100001": "Kupa 7 (7♥)", "100010": "Kupa 8 (8♥)",
+            "100011": "Kupa 9 (9♥)", "100100": "Kupa 10 (10♥)", "100101": "Kupa Kız (Q♥)", "100110": "Kupa Vale (J♥)",
+            "100111": "Kupa Papaz (K♥)",
+            "101000": "Maça As (A♠)", "101001": "Maça 2 (2♠)", "101010": "Maça 3 (3♠)", "101011": "Maça 4 (4♠)",
+            "101100": "Maça 5 (5♠)", "101101": "Maça 6 (6♠)", "101110": "Maça 7 (7♠)", "101111": "Maça 8 (8♠)",
+            "110000": "Maça 9 (9♠)", "110001": "Maça 10 (10♠)", "110010": "Maça Vale (J♠)", "110011": "Maça Kız (Q♠)",
+            "110100": "Maça Papaz (K♠)"
         };
-        // CANLI KAMERA DEĞİŞTİRME MEKANİZMASI
-        async function switchCamera() {
-            // Mevcut çalışan kamerayı durdur ve belleği temizle
-            if (currentStream) {
-                currentStream.getTracks().forEach(track => track.stop());
-            }
-            
-            // Modu tersine çevir
-            currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
-            
-            // Yeni kamera ayarlarıyla sistemi baştan başlat
-            await initCamera();
-        }
-
         async function initCamera() {
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                statusText.innerHTML = "<span style='color:#ff3333'>HATA: HTTPS gerekli!</span>";
+                statusText.innerHTML = "<span style='color:#ff3333'>HATA: HTTPS bağlantısı gerekli!</span>";
                 return;
             }
-            
-            // Eğer eski kamera akışı varsa kapatıldığından emin ol
-            if (currentStream) {
-                currentStream.getTracks().forEach(track => track.stop());
-            }
-
             try {
-                let videoConstraints = {
-                    facingMode: currentFacingMode,
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 }
-                };
-
-                // Eğer arka kamera seçildiyse çözünürlüğü Full HD'ye zorla ve odak parametresini ekle
-                if (currentFacingMode === "environment") {
-                    videoConstraints.width.ideal = 1920;
-                    videoConstraints.height.ideal = 1080;
-                    videoConstraints.advanced = [{ focusMode: "continuous" }];
-                    video.classList.remove('mirror'); // Arka kamerada düz görüntü
-                    statusText.innerText = "Arka Kamera Aktif. Odaklanıyor...";
-                } else {
-                    video.classList.add('mirror'); // Ön kamerada ayna görüntüsü
-                    statusText.innerText = "Ön Kamera Aktif. Hizalanıyor...";
-                }
-
+                // Çizgileri yakalayabilmek için Full HD Arka Kamera zorunlu kılındı
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: videoConstraints,
+                    video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
                     audio: false
                 });
-                
-                currentStream = stream;
                 video.srcObject = stream;
-                
-                // Analiz döngüsünü tetikle (Eğer ilk açılışsa)
+                statusText.innerText = "Kamera aktif. Barkod çizgilerini kırmızı hatta hizalayın.";
                 requestAnimationFrame(analyzeFrame);
             } catch (err) {
-                statusText.innerHTML = "<span style='color:#ff3333'>Kamera Değiştirme Hatası: " + err.name + "</span>";
+                statusText.innerHTML = "<span style='color:#ff3333'>Kamera Erişim Hatası: " + err.name + "</span>";
             }
         }
 
-        function sharpenMatrix(data, w, h) {
-            let weights = [0, -1, 0, -1, 5, -1, 0, -1, 0]; 
-            let side = Math.round(Math.sqrt(weights.length));
-            let halfSide = Math.floor(side / 2);
-            let output = new Uint8ClampedArray(data.length);
-
-            for (let y = 0; y < h; y++) {
-                for (let x = 0; x < w; x++) {
-                    let sy = y;
-                    let sx = x;
-                    let dstOff = (y * w + x) * 4;
-                    let r = 0, g = 0, b = 0;
-
-                    for (let cy = 0; cy < side; cy++) {
-                        for (let cx = 0; cx < side; cx++) {
-                            let scy = Math.min(h - 1, Math.max(0, sy + cy - halfSide));
-                            let scx = Math.min(w - 1, Math.max(0, sx + cx - halfSide));
-                            let srcOff = (scy * w + scx) * 4;
-                            let wt = weights[cy * side + cx];
-                            r += data[srcOff] * wt;
-                            g += data[srcOff + 1] * wt;
-                            b += data[srcOff + 2] * wt;
-                        }
-                    }
-                    output[dstOff] = Math.min(255, Math.max(0, r));
-                    output[dstOff + 1] = Math.min(255, Math.max(0, g));
-                    output[dstOff + 2] = Math.min(255, Math.max(0, b));
-                    output[dstOff + 3] = data[dstOff + 3];
+        // Otsu Algoritması: Işık ve parlamalara göre en ideal siyah-beyaz sınırını bulur
+        function getOtsuThreshold(histogram, totalPixels) {
+            let sum = 0;
+            for (let i = 0; i < 256; i++) sum += i * histogram[i];
+            let sumB = 0, wB = 0, wF = 0;
+            let varMax = 0, threshold = 128;
+            for (let i = 0; i < 256; i++) {
+                wB += histogram[i];
+                if (wB === 0) continue;
+                wF = totalPixels - wB;
+                if (wF === 0) break;
+                sumB += i * histogram[i];
+                let mB = sumB / wB;
+                let mF = (sum - sumB) / wF;
+                let varBetween = wB * wF * (mB - mF) * (mB - mF);
+                if (varBetween > varMax) {
+                    varMax = varBetween;
+                    threshold = i;
                 }
             }
-            return output;
+            return threshold;
         }
 
         function analyzeFrame() {
-            if (isFrozen || video.paused || video.ended || video.readyState < 2) {
+            if (video.paused || video.ended || video.readyState < 2) {
                 requestAnimationFrame(analyzeFrame);
                 return;
             }
 
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
-
-            // Ön kamera veya arka kameraya göre Canvas işleme matrisini dinamik senkronize et
-            if (currentFacingMode === "user") {
-                ctx.translate(canvas.width, 0);
-                ctx.scale(-1, 1);
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
-            } else {
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            }
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
             try {
                 let cropX = Math.floor(canvas.width * 0.15);
                 let cropWidth = Math.floor(canvas.width * 0.70);
-                let centerY = Math.floor(canvas.height * 0.47);
+                let centerY = Math.floor(canvas.height * 0.48);
+                let scanHeight = 30; // Çizgi netliği için dikey 30 satır taranır
 
-                let zoneH = 9;
-                let imgData = ctx.getImageData(cropX, centerY - 4, cropWidth, zoneH);
-                let sharpPixels = sharpenMatrix(imgData.data, cropWidth, zoneH);
+                let imgData = ctx.getImageData(cropX, centerY - 15, cropWidth, scanHeight);
+                let pixels = imgData.data;
 
-                let lumaValues = [];
-                let noiseCheck = 0;
+                // 1. ADIM: Dikey Matris Sıkıştırma (Vertical Projection)
+                // Bu işlem el titremesini ve karıncalanmaları tamamen yok eder
+                let lumaValues = new Float32Array(cropWidth);
+                let histogram = new Int32Array(256);
 
                 for (let col = 0; col < cropWidth; col++) {
-                    let idx1 = (0 * cropWidth + col) * 4; 
-                    let idx2 = (4 * cropWidth + col) * 4; 
-                    let idx3 = (8 * cropWidth + col) * 4; 
-
-                    let b1 = sharpPixels[idx1] * 0.299 + sharpPixels[idx1+1] * 0.587 + sharpPixels[idx1+2] * 0.114;
-                    let b2 = sharpPixels[idx2] * 0.299 + sharpPixels[idx2+1] * 0.587 + sharpPixels[idx2+2] * 0.114;
-                    let b3 = sharpPixels[idx3] * 0.299 + sharpPixels[idx3+1] * 0.587 + sharpPixels[idx3+2] * 0.114;
-
-                    noiseCheck += (Math.abs(b1 - b2) + Math.abs(b2 - b3));
-                    lumaValues.push(b2);
+                    let colSum = 0;
+                    for (let row = 0; row < scanHeight; row++) {
+                        let idx = (row * cropWidth + col) * 4;
+                        let bright = pixels[idx] * 0.299 + pixels[idx+1] * 0.587 + pixels[idx+2] * 0.114;
+                        colSum += bright;
+                    }
+                    let avgBright = Math.floor(colSum / scanHeight);
+                    lumaValues[col] = avgBright;
+                    histogram[avgBright]++;
                 }
 
+                // 2. ADIM: Otsu Eşikleme ile Siyah/Beyaz Ayrımı
+                let otsuThresh = getOtsuThreshold(histogram, cropWidth);
+
+                // Gelişmiş Gürültü Koruması: Ekranda belirgin bir kontrast (siyah-beyaz farkı) yoksa işlemi keser
                 let max = Math.max(...lumaValues);
                 let min = Math.min(...lumaValues);
-                let contrast = max - min;
-
-                // Gelişmiş gürültü duvarı: Boşta hatalı biplemeyi tamamen önler
-                if (contrast < 120 || (noiseCheck / cropWidth) > 12) {
+                if ((max - min) < 80) {
                     binaryResult.innerText = "000000";
                     cardResult.innerText = "-";
-                    // Kameranın aktif moduna göre kılavuz mesajı güncelle
-                    statusText.innerText = currentFacingMode === "environment" ? 
-                        "Barkodu kırmızı çizgiye hizalayın (Arka Kamera)" : "Barkodu kırmızı çizgiye hizalayın (Ön Kamera)";
-                    setTimeout(analyzeFrame, 130);
+                    statusText.innerText = "Çizgi tespit edilmedi. Kırmızı hatta hizalayın.";
+                    requestAnimationFrame(analyzeFrame);
                     return;
                 }
 
-                let sliderFactor = parseInt(sensitivitySlider.value) / 100;
-                let threshold = min + contrast * sliderFactor;
-
-                let currentBit = lumaValues > threshold ? 1 : 0;
+                // 3. ADIM: Çizgi Kalınlık Analizi (Run-Length)
+                let currentBit = lumaValues[0] > otsuThresh ? 1 : 0;
                 let bitRunLength = 0;
                 let runs = [];
 
                 for (let i = 0; i < lumaValues.length; i++) {
-                    let bit = lumaValues[i] > threshold ? 1 : 0;
+                    let bit = lumaValues[i] > otsuThresh ? 1 : 0;
                     if (bit === currentBit) {
                         bitRunLength++;
                     } else {
@@ -397,8 +254,10 @@
                 }
                 runs.push({ bit: currentBit, length: bitRunLength });
 
-                let validRuns = runs.filter(r => r.length > 5);
-                
+                // Çok küçük pürüzleri temizle
+                let validRuns = runs.filter(r => r.length > 4);
+
+                // Gerçek casino protokolü tam olarak 6 çizgi bloğundan oluşur
                 if (validRuns.length === 6) {
                     let totalLen = validRuns.reduce((sum, r) => sum + r.length, 0);
                     let avgLen = totalLen / validRuns.length;
@@ -411,30 +270,25 @@
                     binaryResult.innerText = binaryString;
                     
                     if (cardDatabase[binaryString]) {
-                        let matchedCard = cardDatabase[binaryString];
-                        cardResult.innerText = matchedCard;
-                        statusText.innerText = "KART ALGILANDI! (Sistem Kilitlendi)";
+                        cardResult.innerText = cardDatabase[binaryString];
+                        statusText.innerText = "Kart başarıyla okundu!";
                         playBeep();
-                        
-                        isFrozen = true;
-                        setTimeout(() => {
-                            isFrozen = false;
-                            statusText.innerText = "Barkod bekleniyor...";
-                        }, 1500); 
-
+                        // Kararlılık için okuma sonrası kısa bir bekleme
+                        setTimeout(() => { requestAnimationFrame(analyzeFrame); }, 1500);
+                        return;
                     } else {
                         cardResult.innerText = "Bilinmeyen Kod";
-                        statusText.innerText = "Netlik çubuğunu kaydırın veya mesafeyi ayarlayın.";
+                        statusText.innerText = "Çizgileri hizalayın veya mesafeyi değiştirin.";
                     }
                 } else {
-                    statusText.innerText = "Barkod çizgileri taranıyor...";
+                    statusText.innerText = "Net barkod çizgisi aranıyor...";
                 }
 
             } catch (e) {
                 console.error(e);
             }
 
-            setTimeout(analyzeFrame, 130); 
+            requestAnimationFrame(analyzeFrame);
         }
 
         if (document.readyState === "loading") {
