@@ -27,9 +27,9 @@
             border-radius: 8px; 
             overflow: hidden; 
             background: #222;
-            height: 340px; /* Video alanı genişletildi */
-            display: flex;
-            align-items: center;
+            height: 340px; 
+            display: flex; 
+            align-items: center; 
             justify-content: center;
         } 
         video { 
@@ -42,13 +42,12 @@
         canvas { 
             display: none; 
         } 
-        /* Tarama alanı kutusu dikey olarak genişletildi */
         .overlay { 
             position: absolute; 
-            top: 30%; 
+            top: 35%; 
             left: 5%; 
             width: 90%; 
-            height: 30%; /* %12'den %30'a çıkartılarak barkod alanı büyütüldü */
+            height: 25%; /* Barkodun kaçırılmaması için geniş alan */
             border: 3px dashed #00ffcc; 
             box-sizing: border-box; 
             pointer-events: none; 
@@ -63,14 +62,13 @@
             background: rgba(0,0,0,0.6); 
             padding: 2px 5px; 
         } 
-        /* Canlı tarama analiz hattı kılavuzu */
         .scan-line {
             position: absolute;
             top: 50%;
             left: 0;
             width: 100%;
             height: 2px;
-            background: rgba(255, 0, 0, 0.6);
+            background: rgba(255, 0, 0, 0.7); /* Gerçek tarama aksı kılavuzu */
             z-index: 11;
         }
         .result-box { 
@@ -133,7 +131,7 @@
     <div class="container">
         <video id="video" autoplay playsinline muted></video>
         <div class="overlay">
-            <span class="overlay-text">Barkodu Kutunun İçine Alın</span>
+            <span class="overlay-text">Barkodu Kırmızı Çizgiye Hizalayın</span>
             <div class="scan-line"></div>
         </div>
     </div>
@@ -148,13 +146,10 @@
 
     <div class="controls">
         <div class="slider-container">
-            <span>Kontrast/Işık Eşiği:</span>
-            <input type="range" id="sensitivitySlider" min="30" max="220" value="125">
+            <span>Kontrast/Işık Hassasiyeti:</span>
+            <input type="range" id="sensitivitySlider" min="10" max="90" value="50">
         </div>
     </div>
-
-    <!-- OpenCV motoru tarayıcıyı kilitlemesin diye arka planda asenkron yüklenir -->
-    <script async src="https://opencv.org" type="text/javascript"></script>
 
     <script>
         const video = document.getElementById('video');
@@ -168,7 +163,6 @@
         let audioCtx = null;
         let lastScannedCard = "";
         let lastScanTime = 0;
-        let openCvReady = false;
 
         function playBeep() {
             try {
@@ -176,12 +170,12 @@
                 let oscillator = audioCtx.createOscillator();
                 let gainNode = audioCtx.createGain();
                 oscillator.type = "sine";
-                oscillator.frequency.value = 1200; 
-                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime); 
+                oscillator.frequency.value = 1300; 
+                gainNode.gain.setValueAtTime(0.08, audioCtx.currentTime); 
                 oscillator.connect(gainNode);
                 gainNode.connect(audioCtx.destination);
                 oscillator.start();
-                oscillator.stop(audioCtx.currentTime + 0.08); 
+                oscillator.stop(audioCtx.currentTime + 0.07); 
             } catch (e) {
                 console.error(e);
             }
@@ -220,26 +214,15 @@
                     audio: false
                 });
                 video.srcObject = stream;
-                statusText.innerText = "Kamera aktif. OpenCV kütüphanesi bekleniyor...";
-                checkOpenCVLoader();
+                statusText.innerText = "Sistem Hazır. Barkod aranıyor...";
+                requestAnimationFrame(analyzeFrame);
             } catch (err) {
                 statusText.innerHTML = "<span style='color:#ff3333'>Kamera Erişim Hatası: " + err.name + "</span>";
             }
         }
 
-        function checkOpenCVLoader() {
-            let checkInterval = setInterval(() => {
-                if (typeof cv !== 'undefined' && cv.Mat) {
-                    clearInterval(checkInterval);
-                    openCvReady = true;
-                    statusText.innerText = "Sistem Hazır. Barkod aranıyor...";
-                    requestAnimationFrame(analyzeFrame);
-                }
-            }, 300);
-        }
-
         function analyzeFrame() {
-            if (!openCvReady || video.paused || video.ended || video.readyState < 2) {
+            if (video.paused || video.ended || video.readyState < 2) {
                 requestAnimationFrame(analyzeFrame);
                 return;
             }
@@ -247,123 +230,109 @@
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
 
-            // Ön kamera görüntüsünü ekrandakiyle tam senkronize etmek için matrisi aynala
+            // Kamera ve ekran hizalamasını eşitlemek için matris ters çevrilir
             ctx.translate(canvas.width, 0);
             ctx.scale(-1, 1);
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             ctx.setTransform(1, 0, 0, 1, 0, 0);
 
             try {
-                // Büyük yeşil kutunun koordinat dilimlerini hesapla (ROI)
-                let x = Math.floor(canvas.width * 0.05);
-                let y = Math.floor(canvas.height * 0.30);
-                let width = Math.floor(canvas.width * 0.90);
-                let height = Math.floor(canvas.height * 0.30);
+                let cropX = Math.floor(canvas.width * 0.10);
+                let cropWidth = Math.floor(canvas.width * 0.80);
+                let centerY = Math.floor(canvas.height * 0.47); // Kırmızı çizginin dikey konumu
 
-                // Görüntüyü OpenCV matrisine yükle
-                let src = cv.imread(canvas);
-                let dst = new cv.Mat();
-                let rect = new cv.Rect(x, y, width, height);
-                let roi = src.roi(rect);
-
-                // 1. ADIM: Gri tonlama ve Gürültü Filtreleme ( Gaussian Blur )
-                cv.cvtColor(roi, dst, cv.COLOR_RGBA2GRAY);
-                let ksize = new cv.Size(3, 3);
-                cv.GaussianBlur(dst, dst, ksize, 0, 0, cv.BORDER_DEFAULT);
-
-                // 2. ADIM: Siyah/Beyaz Keskinleştirme ( Binary Threshold )
-                let threshVal = parseInt(sensitivitySlider.value);
-                cv.threshold(dst, dst, threshVal, 255, cv.THRESH_BINARY_INV);
-
-                // 3. ADIM: Akıllı Boşluk Analizi (Kontur Analizi)
-                // Eğer ekranda barkod çizgisi yoksa, gürültüden ötürü rastgele bip yapmasını engeller
-                let contours = new cv.MatVector();
-                let hierarchy = new cv.Mat();
-                cv.findContours(dst, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-                let validLinesCount = 0;
-                for (let i = 0; i < contours.size(); ++i) {
-                    let cnt = contours.get(i);
-                    let area = cv.contourArea(cnt);
-                    // Belirli bir büyüklükteki çizgileri say (Gürültü ve tozları ele)
-                    if (area > 15) {
-                        validLinesCount++;
+                // Hatalı biplemeleri önleyen Akıllı Yazılımsal Filtre (Gürültü Baskılama)
+                // Sadece kırmızı çizginin değil, 3 piksel üstü ve altının ortalamasını alır
+                let lumaValues = [];
+                for (let col = 0; col < cropWidth; col++) {
+                    let totalPixelBright = 0;
+                    let samplePoints = [centerY - 3, centerY, centerY + 3];
+                    
+                    for (let p = 0; p < samplePoints.length; p++) {
+                        let imgData = ctx.getImageData(cropX + col, samplePoints[p], 1, 1);
+                        let pix = imgData.data;
+                        totalPixelBright += (pix[0] * 0.299 + pix[1] * 0.587 + pix[2] * 0.114);
                     }
-                    cnt.delete();
+                    lumaValues.push(totalPixelBright / samplePoints.length);
                 }
 
-                // Ekranda en az 6 belirgin siyah-beyaz dikey çizgi/kontur yoksa işlem yapma
-                if (validLinesCount >= 6) {
-                    // Kutunun tam ortasındaki kırmızı tarama çizgisinin verilerini diziye aktar
-                    let midRow = Math.floor(dst.rows / 2);
-                    let lumaValues = [];
-                    for (let col = 0; col < dst.cols; col++) {
-                        lumaValues.push(dst.ucharAt(midRow, col));
-                    }
+                if (lumaValues.length === 0) {
+                    requestAnimationFrame(analyzeFrame);
+                    return;
+                }
 
-                    // Çizgilerin kalınlıklarını ve binary dizilimlerini hesapla
-                    let currentBit = lumaValues[0] > 127 ? 1 : 0;
-                    let bitRunLength = 0;
-                    let runs = [];
-
-                    for (let i = 0; i < lumaValues.length; i++) {
-                        let bit = lumaValues[i] > 127 ? 1 : 0;
-                        if (bit === currentBit) {
-                            bitRunLength++;
-                        } else {
-                            runs.push({ bit: currentBit, length: bitRunLength });
-                            currentBit = bit;
-                            bitRunLength = 1;
-                        }
-                    }
-                    runs.push({ bit: currentBit, length: bitRunLength });
-
-                    // İnce/Kalın parazitleri temizle
-                    let validRuns = runs.filter(r => r.length > 2);
-                    
-                    if (validRuns.length >= 6) {
-                        let totalLen = validRuns.reduce((sum, r) => sum + r.length, 0);
-                        let avgLen = totalLen / validRuns.length;
-
-                        let binaryString = "";
-                        for (let j = 0; j < 6; j++) {
-                            binaryString += validRuns[j].length > avgLen ? "1" : "0";
-                        }
-
-                        binaryResult.innerText = binaryString;
-                        
-                        if (cardDatabase[binaryString]) {
-                            let matchedCard = cardDatabase[binaryString];
-                            cardResult.innerText = matchedCard;
-                            statusText.innerText = "Kart başarıyla okundu!";
-                            
-                            let now = Date.now();
-                            if (matchedCard !== lastScannedCard || (now - lastScanTime > 2500)) {
-                                playBeep();
-                                lastScannedCard = matchedCard;
-                                lastScanTime = now;
-                            }
-                        } else {
-                            cardResult.innerText = "Kart Tanınamadı";
-                            statusText.innerText = "Işık Hassasiyetini ayarlayın veya yaklaştırın.";
-                        }
-                    }
-                } else {
-                    // Ekranda gerçek bir çizgi dizilimi (barkod) yoksa sistemi dinlenmeye al
+                let max = Math.max(...lumaValues);
+                let min = Math.min(...lumaValues);
+                
+                // Kontrast Değişimi Kontrolü (Gereksiz biplemeyi önleyen en kritik filtre)
+                // Eğer kırmızı hat üzerindeki renk değişimi çok azsa (düz beyaz kart veya boş oda) taramayı durdurur
+                if ((max - min) < 45) {
                     binaryResult.innerText = "000000";
                     cardResult.innerText = "-";
                     statusText.innerText = "Barkod çizgilerini kırmızı hatta hizalayın.";
+                    setTimeout(analyzeFrame, 150);
+                    return;
                 }
 
-                // OpenCV Bellek Temizliği (Hafıza şişmesini önler)
-                src.delete(); dst.delete(); roi.delete();
-                contours.delete(); hierarchy.delete();
+                let sliderFactor = parseInt(sensitivitySlider.value) / 100;
+                let threshold = min + (max - min) * sliderFactor;
+
+                // Dizilim tarayıcı başlangıcı
+                let currentBit = lumaValues[0] > threshold ? 1 : 0;
+                let bitRunLength = 0;
+                let runs = [];
+
+                for (let i = 0; i < lumaValues.length; i++) {
+                    let bit = lumaValues[i] > threshold ? 1 : 0;
+                    if (bit === currentBit) {
+                        bitRunLength++;
+                    } else {
+                        runs.push({ bit: currentBit, length: bitRunLength });
+                        currentBit = bit;
+                        bitRunLength = 1;
+                    }
+                }
+                runs.push({ bit: currentBit, length: bitRunLength });
+
+                // Ufak kamera lekelerini ve titremeleri süz
+                let validRuns = runs.filter(r => r.length > 3);
+                
+                // Casino protokolü tam 6 çizgi geçişi (6 bit) doğrulamalıdır
+                if (validRuns.length >= 6) {
+                    let totalLen = validRuns.reduce((sum, r) => sum + r.length, 0);
+                    let avgLen = totalLen / validRuns.length;
+
+                    let binaryString = "";
+                    for (let j = 0; j < 6; j++) {
+                        binaryString += validRuns[j].length > avgLen ? "1" : "0";
+                    }
+
+                    binaryResult.innerText = binaryString;
+                    
+                    if (cardDatabase[binaryString]) {
+                        let matchedCard = cardDatabase[binaryString];
+                        cardResult.innerText = matchedCard;
+                        statusText.innerText = "Kart başarıyla okundu!";
+                        
+                        let now = Date.now();
+                        if (matchedCard !== lastScannedCard || (now - lastScanTime > 2500)) {
+                            playBeep();
+                            lastScannedCard = matchedCard;
+                            lastScanTime = now;
+                        }
+                    } else {
+                        cardResult.innerText = "Kart Tanınamadı";
+                        statusText.innerText = "Işığı ayarlayın veya barkodu netleştirin.";
+                    }
+                } else {
+                    statusText.innerText = "Kutudaki çizgiler tam algılanamadı.";
+                }
 
             } catch (e) {
-                console.error("OpenCV İşlem Hatası: ", e);
+                console.error("Analiz motoru hatası:", e);
             }
 
-            setTimeout(analyzeFrame, 120); 
+            setTimeout(analyzeFrame, 130); 
         }
 
         if (document.readyState === "loading") {
