@@ -37,7 +37,7 @@
             height: 100%; 
             object-fit: cover; 
             display: block; 
-            transform: scaleX(-1); /* Ön kamera aynalama kesin olarak geri getirildi */
+            transform: scaleX(-1); /* Ekran Aynalaması */
         } 
         canvas { 
             display: none; 
@@ -168,11 +168,10 @@
         };
         async function initCamera() {
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                statusText.innerHTML = "<span style='color:#ff3333'>HATA: HTTPS bağlantısı gerekli!</span>";
+                statusText.innerHTML = "<span style='color:#ff3333'>HATA: HTTPS gerekli!</span>";
                 return;
             }
             try {
-                // Ön kamera ("user") kesin olarak geri getirildi
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
                     audio: false
@@ -194,11 +193,8 @@
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
 
-            // Ön kamera için canvas üzerinde tam senkronize aynalama çizimi
-            ctx.translate(canvas.width, 0);
-            ctx.scale(-1, 1);
+            // Kamera görüntüsü canvas üzerine ham haliyle çiziliyor
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            ctx.setTransform(1, 0, 0, 1, 0, 0);
 
             try {
                 let cropX = Math.floor(canvas.width * 0.15);
@@ -208,17 +204,19 @@
                 let imgData = ctx.getImageData(cropX, centerY, cropWidth, 1);
                 let pixels = imgData.data;
 
+                // CRITICAL FIX: Döngüyü düz okumak yerine SAĞDAN SOLA (Tersine) dolduruyoruz!
+                // Böylece ekrandaki ayna görüntüsü ile yazılımın okuma yönü birebir eşitleniyor.
                 let lumaValues = [];
-                for (let i = 0; i < pixels.length; i += 4) {
-                    lumaValues.push(pixels[i] * 0.299 + pixels[i+1] * 0.587 + pixels[i+2] * 0.114);
+                for (let i = pixels.length - 4; i >= 0; i -= 4) {
+                    let bright = pixels[i] * 0.299 + pixels[i+1] * 0.587 + pixels[i+2] * 0.114;
+                    lumaValues.push(bright);
                 }
 
                 let max = Math.max(...lumaValues);
                 let min = Math.min(...lumaValues);
                 let contrast = max - min;
 
-                // KESİN GÜVENLİK BARİYERİ: Ekranda net dikey siyah barkod blokları yoksa
-                // (Örneğin kontrast 110'dan düşükse) sahte okuma yapmayı ve biplemeyi tamamen reddeder
+                // Boşta bipleme engelleyici bariyer
                 if (contrast < 110) {
                     binaryResult.innerText = "000000";
                     cardResult.innerText = "-";
@@ -227,16 +225,13 @@
                     return;
                 }
 
-                // Dinamik binarizasyon eşiği
                 let threshold = min + contrast * 0.5;
 
-                // 1. ADIM: Dikey şerit alanındaki bağımsız çizgi bloklarını (Blobs) tespit etme
                 let binarySegment = [];
                 for (let i = 0; i < lumaValues.length; i++) {
                     binarySegment.push(lumaValues[i] > threshold ? 1 : 0);
                 }
 
-                // 2. ADIM: Çizgilerin (0) ve boşlukların (1) fiziksel genişliklerini piksel piksel ölçme
                 let currentBit = binarySegment[0];
                 let runLen = 0;
                 let runs = [];
@@ -252,10 +247,8 @@
                 }
                 runs.push({ bit: currentBit, length: runLen });
 
-                // Kamera kumlanmalarını (tozları) temizlemek için 4 pikselden dar alanları eliyoruz
                 let validRuns = runs.filter(r => r.length > 4);
 
-                // 3. ADIM: Gerçek casino 6 bitlik ID blok doğrulaması
                 if (validRuns.length >= 6) {
                     let totalLen = 0;
                     for(let k = 0; k < 6; k++) totalLen += validRuns[k].length;
@@ -263,7 +256,6 @@
 
                     let binaryString = "";
                     for (let j = 0; j < 6; j++) {
-                        // Çizgi genişliği ortalamadan büyükse Kalın (1), küçükse İnce (0)
                         binaryString += validRuns[j].length > avgLen ? "1" : "0";
                     }
 
@@ -274,15 +266,12 @@
                         statusText.innerText = "Kart başarıyla algılandı!";
                         playBeep();
                         
-                        // Doğru kartta kilitlenme mekanizması (1.5 saniye)
                         isFrozen = true;
-                        setTimeout(() => {
-                            isFrozen = false;
-                        }, 1500);
+                        setTimeout(() => { isFrozen = false; }, 1500);
                         return;
                     } else {
-                        cardResult.innerText = "Hatalı Kod Kombinasyonu";
-                        statusText.innerText = "Mesafe ayarı yapın veya çizgileri dik tutun.";
+                        cardResult.innerText = "Hatalı Simetri";
+                        statusText.innerText = "Kartı hafifçe ileri-geri hareket ettirin.";
                     }
                 } else {
                     statusText.innerText = "Çizgiler taranıyor, odağı koruyun...";
