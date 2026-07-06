@@ -1,0 +1,316 @@
+<!doctype html> 
+<html lang="tr"> 
+<head> 
+    <meta charset="utf-8"> 
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"> 
+    <title>İskambil Barkod Okuyucu</title> 
+    <style> 
+        body { 
+            font-family: arial, sans-serif; 
+            background-color: #121212; 
+            color: #ffffff; 
+            margin: 0; 
+            padding: 10px; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+        } 
+        h2 { 
+            margin: 10px 0; 
+            color: #00ffcc; 
+            font-size: 1.2rem; 
+        } 
+        .container { 
+            position: relative; 
+            width: 100%; 
+            max-width: 400px; 
+            border-radius: 8px; 
+            overflow: hidden; 
+            background: #222;
+            height: 300px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        } 
+        video { 
+            width: 100%; 
+            height: 100%; 
+            object-fit: cover; 
+            display: block; 
+            transform: scaleX(-1); 
+        } 
+        canvas { 
+            display: none; 
+        } 
+        .overlay { 
+            position: absolute; 
+            top: 40%; 
+            left: 5%; 
+            width: 90%; 
+            height: 12%; 
+            border: 3px dashed #00ffcc; 
+            box-sizing: border-box; 
+            pointer-events: none; 
+            z-index: 10; 
+        } 
+        .overlay-text { 
+            position: absolute; 
+            top: -25px; 
+            left: 0; 
+            color: #00ffcc; 
+            font-size: 0.8rem; 
+            background: rgba(0,0,0,0.6); 
+            padding: 2px 5px; 
+        } 
+        .result-box { 
+            margin-top: 15px; 
+            width: 90%; 
+            max-width: 360px; 
+            background: #1e1e1e; 
+            padding: 15px; 
+            border-radius: 8px; 
+            border: 1px solid #333; 
+            text-align: center; 
+        } 
+        .binary { 
+            font-size: 1.6rem; 
+            font-weight: bold; 
+            color: #ffcc00; 
+            letter-spacing: 4px; 
+            margin: 5px 0; 
+        } 
+        .card-name { 
+            font-size: 1.8rem; 
+            font-weight: bold; 
+            color: #00ffaa; 
+        } 
+        .status { 
+            font-size: 0.9rem; 
+            color: #00ffcc; 
+            margin-top: 5px; 
+        } 
+        .controls {
+            margin-top: 15px;
+            width: 90%;
+            max-width: 360px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            font-size: 0.85rem;
+            color: #aaa;
+        }
+        .slider-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #1a1a1a;
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #222;
+        }
+        input[type=range] {
+            flex-grow: 1;
+            margin-left: 10px;
+            accent-color: #00ffcc;
+        }
+    </style> 
+</head>
+<body>
+
+    <h2>İskambil Barkod Taraması</h2>
+
+    <div class="container">
+        <video id="video" autoplay playsinline muted></video>
+        <div class="overlay">
+            <span class="overlay-text">Barkodu Hizalayın</span>
+        </div>
+    </div>
+
+    <canvas id="analyzerCanvas"></canvas>
+
+    <div class="result-box">
+        <div class="status" id="status">Kamera başlatılıyor...</div>
+        <div class="binary" id="binaryResult">000000</div>
+        <div class="card-name" id="cardResult">-</div>
+    </div>
+
+    <div class="controls">
+        <div class="slider-container">
+            <span>Işık Hassasiyeti:</span>
+            <input type="range" id="sensitivitySlider" min="10" max="90" value="50">
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('analyzerCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusText = document.getElementById('status');
+        const binaryResult = document.getElementById('binaryResult');
+        const cardResult = document.getElementById('cardResult');
+        const sensitivitySlider = document.getElementById('sensitivitySlider');
+
+        let audioCtx = null;
+        let lastScannedCard = "";
+        let lastScanTime = 0;
+
+        function playBeep() {
+            try {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                let oscillator = audioCtx.createOscillator();
+                let gainNode = audioCtx.createGain();
+                oscillator.type = "sine";
+                oscillator.frequency.value = 1200; 
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime); 
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.08); 
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        const cardDatabase = {
+            "000001": "Sinek As (A♣) [ID:1]",     "000010": "Sinek 2 (2♣) [ID:2]",     "000011": "Sinek 3 (3♣) [ID:3]",
+            "000100": "Sinek 4 (4♣) [ID:4]",     "000101": "Sinek 5 (5♣) [ID:5]",     "000110": "Sinek 6 (6♣) [ID:6]",
+            "000111": "Sinek 7 (7♣) [ID:7]",     "001000": "Sinek 8 (8♣) [ID:8]",     "001001": "Sinek 9 (9♣) [ID:9]",
+            "001010": "Sinek 10 (10♣) [ID:10]",  "001011": "Sinek Vale (J♣) [ID:11]", "001100": "Sinek Kız (Q♣) [ID:12]",
+            "001101": "Sinek Papaz (K♣) [ID:13]",
+            "001110": "Karo As (A♦) [ID:14]",    "001111": "Karo 2 (2♦) [ID:15]",     "010000": "Karo 3 (3♦) [ID:16]",
+            "010001": "Karo 4 (4♦) [ID:17]",     "010010": "Karo 5 (5♦) [ID:18]",     "010011": "Karo 6 (6♦) [ID:19]",
+            "010100": "Karo 7 (7♦) [ID:20]",     "010101": "Karo 8 (8♦) [ID:21]",     "010110": "Karo 9 (9♦) [ID:22]",
+            "010111": "Karo 10 (10♦) [ID:23]",   "011000": "Karo Vale (J♦) [ID:24]",  "011001": "Karo Kız (Q♦) [ID:25]",
+            "011010": "Karo Papaz (K♦) [ID:26]",
+            "011011": "Kupa As (A♥) [ID:27]",    "011100": "Kupa 2 (2♥) [ID:28]",     "011101": "Kupa 3 (3♥) [ID:29]",
+            "011110": "Kupa 4 (4♥) [ID:30]",     "011111": "Kupa 5 (5♥) [ID:31]",     "100000": "Kupa 6 (6♥) [ID:32]",
+            "100001": "Kupa 7 (7♥) [ID:33]",     "100010": "Kupa 8 (8♥) [ID:34]",     "100011": "Kupa 9 (9♥) [ID:35]",
+            "100100": "Kupa 10 (10♥) [ID:36]",   "100101": "Kupa Kız (Q♥) [ID:37]",   "100110": "Kupa Vale (J♥) [ID:38]",
+            "100111": "Kupa Papaz (K♥) [ID:39]",
+            "101000": "Maça As (A♠) [ID:40]",    "101001": "Maça 2 (2♠) [ID:41]",     "101010": "Maça 3 (3♠) [ID:42]",
+            "101011": "Maça 4 (4♠) [ID:43]",     "101100": "Maça 5 (5♠) [ID:44]",     "101101": "Maça 6 (6♠) [ID:45]",
+            "101110": "Maça 7 (7♠) [ID:46]",     "101111": "Maça 8 (8♠) [ID:47]",     "110000": "Maça 9 (9♠) [ID:48]",
+            "110001": "Maça 10 (10♠) [ID:49]",   "110010": "Maça Vale (J♠) [ID:50]",  "110011": "Maça Kız (Q♠) [ID:51]",
+            "110100": "Maça Papaz (K♠) [ID:52]"
+        };
+
+        async function initCamera() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                statusText.innerHTML = "<span style='color:#ff3333'>HATA: HTTPS gerekli!</span>";
+                return;
+            }
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+                    audio: false
+                });
+                video.srcObject = stream;
+                statusText.innerText = "Kart bekleniyor...";
+                requestAnimationFrame(analyzeFrame);
+            } catch (err) {
+                statusText.innerHTML = "<span style='color:#ff3333'>Kamera Erişim Hatası: " + err.name + "</span>";
+            }
+        }
+
+        function analyzeFrame() {
+            if (video.paused || video.ended || video.readyState < 2) {
+                requestAnimationFrame(analyzeFrame);
+                return;
+            }
+
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+            try {
+                let cropX = Math.floor(canvas.width * 0.10);
+                let cropWidth = Math.floor(canvas.width * 0.80);
+                let centerY = Math.floor(canvas.height * 0.46);
+
+                let imgData = ctx.getImageData(cropX, centerY, cropWidth, 1);
+                let pixels = imgData.data;
+
+                let lumaValues = [];
+                for (let i = 0; i < pixels.length; i += 4) {
+                    let bright = pixels[i] * 0.299 + pixels[i+1] * 0.587 + pixels[i+2] * 0.114;
+                    lumaValues.push(bright);
+                }
+
+                if (lumaValues.length === 0) {
+                    requestAnimationFrame(analyzeFrame);
+                    return;
+                }
+
+                let max = Math.max(...lumaValues);
+                let min = Math.min(...lumaValues);
+                
+                let sliderFactor = parseInt(sensitivitySlider.value) / 100;
+                let threshold = min + (max - min) * sliderFactor;
+
+                let currentBit = lumaValues[0] > threshold ? 1 : 0;
+                let bitRunLength = 0;
+                let runs = [];
+
+                for (let i = 0; i < lumaValues.length; i++) {
+                    let bit = lumaValues[i] > threshold ? 1 : 0;
+                    if (bit === currentBit) {
+                        bitRunLength++;
+                    } else {
+                        runs.push({ bit: currentBit, length: bitRunLength });
+                        currentBit = bit;
+                        bitRunLength = 1;
+                    }
+                }
+                runs.push({ bit: currentBit, length: bitRunLength });
+
+                let validRuns = runs.filter(r => r.length > 2);
+                
+                if (validRuns.length >= 6) {
+                    let totalLen = validRuns.reduce((sum, r) => sum + r.length, 0);
+                    let avgLen = totalLen / validRuns.length;
+
+                    let binaryString = "";
+                    for (let j = 0; j < 6; j++) {
+                        binaryString += validRuns[j].length > avgLen ? "1" : "0";
+                    }
+
+                    binaryResult.innerText = binaryString;
+                    
+                    if (cardDatabase[binaryString]) {
+                        let matchedCard = cardDatabase[binaryString];
+                        cardResult.innerText = matchedCard;
+                        statusText.innerText = "Kart başarıyla okundu!";
+                        
+                        let now = Date.now();
+                        if (matchedCard !== lastScannedCard || (now - lastScanTime > 2000)) {
+                            playBeep();
+                            lastScannedCard = matchedCard;
+                            lastScanTime = now;
+                        }
+                    } else {
+                        cardResult.innerText = "Kart Tanınamadı";
+                        statusText.innerText = "Kodu yeşil kutuya ortalayın.";
+                    }
+                } else {
+                    statusText.innerText = "Çizgileri kutuya tam ortalayın.";
+                }
+
+            } catch (e) {
+                console.error(e);
+            }
+
+            setTimeout(analyzeFrame, 150); 
+        }
+
+        if (document.readyState === "loading") {
+            window.addEventListener('DOMContentLoaded', initCamera);
+        } else {
+            initCamera();
+        }
+    </script>
+</body>
+</html>
