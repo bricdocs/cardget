@@ -38,6 +38,7 @@
             object-fit: cover; 
             display: block; 
             transform: scaleX(-1); 
+            transition: transform 0.1s ease-out; /* Canlı zoom geçişi için */
         } 
         canvas { 
             display: none; 
@@ -104,7 +105,7 @@
             max-width: 360px;
             display: flex;
             flex-direction: column;
-            gap: 5px;
+            gap: 8px;
             font-size: 0.85rem;
             color: #aaa;
         }
@@ -145,6 +146,11 @@
     </div>
 
     <div class="controls">
+        <!-- YAKINLAŞTIRMA (ZOOM) SLIDER ÇUBUĞU -->
+        <div class="slider-container">
+            <span>Kamera Zoom (X):</span>
+            <input type="range" id="zoomSlider" min="10" max="35" value="10">
+        </div>
         <div class="slider-container">
             <span>Netlik/Işık Hassasiyeti:</span>
             <input type="range" id="sensitivitySlider" min="20" max="80" value="50">
@@ -159,9 +165,11 @@
         const binaryResult = document.getElementById('binaryResult');
         const cardResult = document.getElementById('cardResult');
         const sensitivitySlider = document.getElementById('sensitivitySlider');
+        const zoomSlider = document.getElementById('zoomSlider');
 
         let audioCtx = null;
         let isFrozen = false;
+        let videoTrack = null;
 
         function playBeep() {
             try {
@@ -208,17 +216,23 @@
                 return;
             }
             try {
-                // Makro çekimler için donanımsal odak kilitleyici parametreler entegre edildi
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: { 
                         facingMode: "user", 
                         width: { ideal: 1280 }, 
                         height: { ideal: 720 },
-                        advanced: [{ focusMode: "continuous" }] /* Donanımsal sürekli odak modu */
+                        advanced: [{ focusMode: "continuous" }] 
                     },
                     audio: false
                 });
                 video.srcObject = stream;
+                
+                // Donanımsal zoom desteğini yakalamak için kanalı kaydet
+                videoTrack = stream.getVideoTracks()[0];
+                
+                // Canlı zoom slider değişim dinleyicisi
+                zoomSlider.addEventListener('input', applyZoomFactor);
+
                 statusText.innerText = "Sistem Aktif. Barkod bekleniyor...";
                 requestAnimationFrame(analyzeFrame);
             } catch (err) {
@@ -226,9 +240,26 @@
             }
         }
 
-        // YAZILIMSAL DİJİTAL NETLEŞTİRME FİLTRESİ (Sharpen Convolution Filter)
+        // Donanımsal ve Görsel Aynalı Zoom Kontrolcüsü
+        function applyZoomFactor() {
+            let scaleVal = parseFloat(zoomSlider.value) / 10;
+            
+            // 1. Kademe: Ekranda kullanıcının önizlemesini büyüt (Aynalamayı bozmadan)
+            video.style.transform = `scaleX(-1) scale(${scaleVal})`;
+
+            // 2. Kademe: Eğer telefon donanımı ön kamerada zoom destekliyorsa doğrudan lense ilet
+            if (videoTrack && typeof videoTrack.getCapabilities === 'function') {
+                let capabilities = videoTrack.getCapabilities();
+                if (capabilities.zoom) {
+                    let currentZoom = parseFloat(zoomSlider.value) / 10;
+                    let targetZoom = Math.min(capabilities.zoom.max, Math.max(capabilities.zoom.min, currentZoom));
+                    videoTrack.applyConstraints({ advanced: [{ zoom: targetZoom }] }).catch(e => console.log(e));
+                }
+            }
+        }
+
         function sharpenMatrix(data, w, h) {
-            let weights = [0, -1, 0, -1, 5, -1, 0, -1, 0]; // Keskinlik kazandırma matrisi
+            let weights = [0, -1, 0, -1, 5, -1, 0, -1, 0]; 
             let side = Math.round(Math.sqrt(weights.length));
             let halfSide = Math.floor(side / 2);
             let output = new Uint8ClampedArray(data.length);
@@ -261,7 +292,6 @@
         }
 
         function analyzeFrame() {
-            // Eğer ekran dondurulmuşsa (Freeze) taramayı 1.2 saniyeliğine askıya al
             if (isFrozen || video.paused || video.ended || video.readyState < 2) {
                 requestAnimationFrame(analyzeFrame);
                 return;
@@ -270,31 +300,43 @@
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
 
-            ctx.translate(canvas.width, 0);
-            ctx.scale(-1, 1);
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            let zoomLevel = parseFloat(zoomSlider.value) / 10;
+
+            // 3. Kademe: Yazılımsal Analiz Matrisi Zoom Entegrasyonu (Yapay Zeka Kırpma)
+            // Zoom seviyesi arttıkça canvas merkezden kırpılarak büyütülmüş pikselleri işler
+            if (zoomLevel > 1.0) {
+                let zoomW = canvas.width / zoomLevel;
+                let zoomH = canvas.height / zoomLevel;
+                let zoomX = (canvas.width - zoomW) / 2;
+                let zoomY = (canvas.height - zoomH) / 2;
+
+                ctx.translate(canvas.width, 0);
+                ctx.scale(-1, 1);
+                ctx.drawImage(video, zoomX, zoomY, zoomW, zoomH, 0, 0, canvas.width, canvas.height);
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+            } else {
+                ctx.translate(canvas.width, 0);
+                ctx.scale(-1, 1);
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+            }
 
             try {
                 let cropX = Math.floor(canvas.width * 0.15);
                 let cropWidth = Math.floor(canvas.width * 0.70);
                 let centerY = Math.floor(canvas.height * 0.47);
 
-                // Tarama hattının çevresindeki küçük pürüzlü dikey şeridi çekiyoruz
                 let zoneH = 9;
                 let imgData = ctx.getImageData(cropX, centerY - 4, cropWidth, zoneH);
-                
-                // Bulanık pikselleri jilet gibi keskin çizgilere çevirmek için filtreyi çalıştır
                 let sharpPixels = sharpenMatrix(imgData.data, cropWidth, zoneH);
 
                 let lumaValues = [];
                 let noiseCheck = 0;
 
-                // Keskinleştirilmiş pikselleri dikey olarak süz ve doğrula
                 for (let col = 0; col < cropWidth; col++) {
-                    let idx1 = (0 * cropWidth + col) * 4; // Üst satır
-                    let idx2 = (4 * cropWidth + col) * 4; // Orta (Kırmızı hat)
-                    let idx3 = (8 * cropWidth + col) * 4; // Alt satır
+                    let idx1 = (0 * cropWidth + col) * 4; 
+                    let idx2 = (4 * cropWidth + col) * 4; 
+                    let idx3 = (8 * cropWidth + col) * 4; 
 
                     let b1 = sharpPixels[idx1] * 0.299 + sharpPixels[idx1+1] * 0.587 + sharpPixels[idx1+2] * 0.114;
                     let b2 = sharpPixels[idx2] * 0.299 + sharpPixels[idx2+1] * 0.587 + sharpPixels[idx2+2] * 0.114;
@@ -308,11 +350,11 @@
                 let min = Math.min(...lumaValues);
                 let contrast = max - min;
 
-                // YÜKSEK GÜVENLİK BARİYERLERİ: Boş odada veya düz zeminde biplemeyi tamamen keser
+                // Boşta bipleme koruma bariyerleri (Zoom piksellerine göre optimize edildi)
                 if (contrast < 110 || (noiseCheck / cropWidth) > 18) {
                     binaryResult.innerText = "000000";
                     cardResult.innerText = "-";
-                    statusText.innerText = "Barkod çizgilerini kırmızı hatta yaklaştırın.";
+                    statusText.innerText = "Barkod çizgilerini kırmızı hatta hizalayın.";
                     setTimeout(analyzeFrame, 130);
                     return;
                 }
@@ -320,7 +362,7 @@
                 let sliderFactor = parseInt(sensitivitySlider.value) / 100;
                 let threshold = min + contrast * sliderFactor;
 
-                let currentBit = lumaValues[0] > threshold ? 1 : 0;
+                let currentBit = lumaValues > threshold ? 1 : 0;
                 let bitRunLength = 0;
                 let runs = [];
 
@@ -355,16 +397,15 @@
                         statusText.innerText = "KART ALGILANDI! (Sistem kilitlendi)";
                         playBeep();
                         
-                        // AKILLI EKRAN DONDURMA TETİKLEYİCİSİ
                         isFrozen = true;
                         setTimeout(() => {
                             isFrozen = false;
                             statusText.innerText = "Barkod bekleniyor...";
-                        }, 1200); /* 1.2 saniye boyunca ekranı sabit tutar, biplemeyi keser */
+                        }, 1200); 
 
                     } else {
                         cardResult.innerText = "Şifre Çözülemedi";
-                        statusText.innerText = "Hassasiyet çubuğunu kaydırarak çizgileri netleştirin.";
+                        statusText.innerText = "Hassasiyet veya zoom ayarı yapın.";
                     }
                 } else {
                     statusText.innerText = "Net barkod çizgisi aranıyor...";
